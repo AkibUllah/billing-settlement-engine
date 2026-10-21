@@ -8,6 +8,8 @@ from pathlib import Path
 
 import dj_database_url
 
+from config.hosts import allowed_hosts, csrf_trusted_origins, split_list
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
@@ -17,13 +19,16 @@ def env_bool(name: str, default: bool) -> bool:
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-only-insecure-secret-key-change-me")
 DEBUG = env_bool("DJANGO_DEBUG", True)
-ALLOWED_HOSTS = [
-    h.strip()
-    for h in os.getenv("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
-    if h.strip()
-]
+# Render publishes the public hostname as RENDER_EXTERNAL_HOSTNAME; it is allowed automatically.
+_RENDER_HOSTNAME = os.getenv("RENDER_EXTERNAL_HOSTNAME", "")
+ALLOWED_HOSTS = allowed_hosts(
+    split_list(os.getenv("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1")), _RENDER_HOSTNAME
+)
 if DEBUG:
     ALLOWED_HOSTS = ALLOWED_HOSTS + ["testserver"]
+CSRF_TRUSTED_ORIGINS = csrf_trusted_origins(
+    split_list(os.getenv("DJANGO_CSRF_TRUSTED_ORIGINS", "")), _RENDER_HOSTNAME
+)
 
 INSTALLED_APPS = [
     "django.contrib.admin",
