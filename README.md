@@ -9,6 +9,15 @@ A Django 4.2 + DRF core for billing merchants and settling with MFS and bank par
 ![DRF](https://img.shields.io/badge/DRF-3.14%2B-a30000)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
+## Try it live
+
+| | |
+|---|---|
+| API reference | https://akibullah.github.io/billing-settlement-engine/ — Swagger UI built from the drf-spectacular schema (static; no backend behind it) |
+| Run in your browser | [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/AkibUllah/billing-settlement-engine?quickstart=1) — starts web + PostgreSQL with `docker compose`, runs `seed_demo` and one settlement; open forwarded port 8000 at `/api/docs/` (authorize with the token from `.demo-credentials.txt`) or `/admin/` (`demo` / `demo12345`). |
+| One-click deploy | [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/AkibUllah/billing-settlement-engine) — `render.yaml` provisions the web service and a free PostgreSQL; the container migrates and seeds on start and prints the API token to the logs. |
+| Local | `docker compose up` (see Quick Start) |
+
 ## Why this exists
 
 When a platform collects payments through bKash, Nagad, Rocket and card acquirers on behalf of many merchants, three questions come up every month: how much does each partner owe us for the period (after their commission and VAT), how much do we owe each merchant (after our fees), and do the partner's statements agree with our records? I have seen this handled in spreadsheets more than once, with fee rules re-typed by hand and settlement amounts that could not be traced back to transactions. This project is the version I wanted: fees frozen on each transaction when it is recorded, every settlement and invoice backed by a balanced journal entry, and a reconciliation report that names the exact references that disagree.

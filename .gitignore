@@ -27,3 +27,7 @@ htmlcov/
 .DS_Store
 staticfiles/
 media/
+
+# Exported schema and Codespaces demo credentials
+/openapi.json
+.demo-credentials.txt

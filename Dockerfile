@@ -21,4 +21,6 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=15s \
   CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health/', timeout=2).status == 200 else 1)"
 
-CMD ["sh", "-c", "python manage.py migrate --noinput && gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3 --access-logfile -"]
+# SEED_DEMO_ON_START=true loads the idempotent demo data after migrating (used by the Render
+# blueprint, where the free plan has no shell); the admin login and API token appear in the logs.
+CMD ["sh", "-c", "python manage.py migrate --noinput && if [ \"$SEED_DEMO_ON_START\" = true ]; then python manage.py seed_demo; fi && gunicorn config.wsgi:application --bind 0.0.0.0:${PORT:-8000} --workers 3 --access-logfile -"]

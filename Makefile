@@ -3,7 +3,7 @@ VENV ?= .venv
 PY := $(VENV)/bin/python
 MANAGE := $(PY) manage.py
 
-.PHONY: help venv install migrate makemigrations seed dev test cov lint fmt settle shell docker-up docker-down clean
+.PHONY: help venv install migrate makemigrations seed dev test cov lint fmt settle shell openapi docker-up docker-down clean
 
 help: ## Show targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
@@ -47,6 +47,9 @@ lint: ## Ruff check + format check + migration check
 fmt: ## Format + autofix
 	$(VENV)/bin/ruff format apps config tests
 	$(VENV)/bin/ruff check --fix apps config tests
+
+openapi: ## Export the OpenAPI document to openapi.json
+	DATABASE_URL="sqlite://:memory:" $(MANAGE) spectacular --format openapi-json --file openapi.json
 
 docker-up: ## web + postgres
 	docker compose up --build -d
