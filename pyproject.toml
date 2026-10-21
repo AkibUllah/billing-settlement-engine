@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "billing-settlement-engine"
+version = "0.1.0"
+description = "Django + DRF billing and settlement core: double-entry ledger, tiered fee schedules with VAT, invoices, partner settlement batches and CSV reconciliation"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Akib Jafor" }]
+requires-python = ">=3.10"
+keywords = ["django", "drf", "billing", "settlement", "ledger", "double-entry", "fintech", "mfs", "bkash"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Framework :: Django :: 4.2",
+  "License :: OSI Approved :: MIT License",
+]
+dependencies = [
+  "Django>=4.2,<5.0",
+  "djangorestframework>=3.14",
+  "django-filter>=23.5",
+  "drf-spectacular>=0.27",
+  "dj-database-url>=2.1",
+  "psycopg[binary]>=3.1",
+  "gunicorn>=21.2",
+  "whitenoise>=6.6",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.4",
+  "pytest-django>=4.7",
+  "pytest-cov>=4.1",
+  "ruff>=0.3",
+]
+
+[tool.setuptools]
+packages = []
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings"
+python_files = ["test_*.py"]
+testpaths = ["tests"]
+addopts = "-q --reuse-db"
+filterwarnings = [
+  "ignore::DeprecationWarning:rest_framework.*",
+  "ignore:No directory at:UserWarning",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["*/migrations/*"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "W", "DJ"]
+ignore = ["DJ001"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["apps", "config"]
