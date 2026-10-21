@@ -1,3 +1,4 @@
+<!-- topics: django,django-rest-framework,python,billing,settlement,double-entry-ledger,fintech,invoicing,postgresql -->
 # Billing & Settlement Engine
 
 A Django 4.2 + DRF core for billing merchants and settling with MFS and bank partners: a double-entry ledger with an enforced debits-equals-credits invariant, percentage/fixed/tiered fee schedules with VAT, invoice generation, per-partner settlement batches with a PENDING → APPROVED → PAID workflow, and CSV reconciliation against partner reports.
