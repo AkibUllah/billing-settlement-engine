@@ -21,7 +21,7 @@ PARTNERS = [
     ("BKASH", "bKash", Partner.Type.MFS, "bKash merchant commission"),
     ("NAGAD", "Nagad", Partner.Type.MFS, "Nagad merchant commission"),
     ("ROCKET", "Rocket (DBBL)", Partner.Type.MFS, "Rocket commission"),
-    ("CITYBANK", "City Bank", Partner.Type.BANK, "Card acquiring (tiered)"),
+    ("DEMOBANK", "Demo Card Bank", Partner.Type.BANK, "Card acquiring (tiered)"),
 ]
 
 MERCHANTS = [
