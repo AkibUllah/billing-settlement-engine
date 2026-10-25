@@ -42,7 +42,7 @@ def test_partner_and_merchant_crud_with_filters(api, pct_schedule):
         {"code": "BKASH", "name": "bKash", "type": "mfs", "fee_schedule": pct_schedule.id},
     )
     assert r.status_code == 201 and r.json()["fee_schedule_name"] == "bKash commission"
-    api.post("/api/partners/", {"code": "CITYBANK", "name": "City Bank", "type": "bank"})
+    api.post("/api/partners/", {"code": "DEMOBANK", "name": "Demo Card Bank", "type": "bank"})
     assert api.get("/api/partners/", {"type": "bank"}).json()["count"] == 1
     assert api.get("/api/partners/", {"search": "bka"}).json()["count"] == 1
 
