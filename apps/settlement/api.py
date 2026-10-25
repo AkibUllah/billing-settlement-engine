@@ -5,7 +5,6 @@ from rest_framework.decorators import action
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 
-from apps.api_errors import DomainError
 from apps.settlement.models import ReconciliationReport, SettlementBatch
 from apps.settlement.serializers import (
     MarkPaidSerializer,
@@ -15,8 +14,6 @@ from apps.settlement.serializers import (
     SettlementBatchSerializer,
 )
 from apps.settlement.services import (
-    InvalidTransition,
-    SettlementError,
     approve_batch,
     export_csv,
     mark_paid,
@@ -52,10 +49,7 @@ class SettlementBatchViewSet(viewsets.ReadOnlyModelViewSet):
     @extend_schema(request=None, responses={200: SettlementBatchSerializer})
     @action(detail=True, methods=["post"])
     def approve(self, request, pk=None):
-        try:
-            batch = approve_batch(self.get_object(), user=request.user)
-        except InvalidTransition as exc:
-            raise DomainError(str(exc), status.HTTP_409_CONFLICT) from exc
+        batch = approve_batch(self.get_object(), user=request.user)
         return Response(SettlementBatchSerializer(batch).data)
 
     @extend_schema(request=MarkPaidSerializer, responses={200: SettlementBatchSerializer})
@@ -63,10 +57,7 @@ class SettlementBatchViewSet(viewsets.ReadOnlyModelViewSet):
     def mark_paid(self, request, pk=None):
         serializer = MarkPaidSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        try:
-            batch = mark_paid(self.get_object(), serializer.validated_data["payment_reference"])
-        except InvalidTransition as exc:
-            raise DomainError(str(exc), status.HTTP_409_CONFLICT) from exc
+        batch = mark_paid(self.get_object(), serializer.validated_data["payment_reference"])
         return Response(SettlementBatchSerializer(batch).data)
 
     @extend_schema(
@@ -78,10 +69,7 @@ class SettlementBatchViewSet(viewsets.ReadOnlyModelViewSet):
         serializer = ReconcileUploadSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         upload = serializer.validated_data["file"]
-        try:
-            report = reconcile(self.get_object(), upload.read(), source_name=upload.name)
-        except SettlementError as exc:
-            raise DomainError(str(exc), status.HTTP_400_BAD_REQUEST) from exc
+        report = reconcile(self.get_object(), upload.read(), source_name=upload.name)
         return Response(ReconciliationReportSerializer(report).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["get"], url_path="export")
