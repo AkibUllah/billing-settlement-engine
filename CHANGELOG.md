@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI workflow runs with a read-only `GITHUB_TOKEN` by default.
 - Demo seed data uses a fictional card-acquiring bank (`DEMOBANK`, "Demo Card Bank").
 
+### Fixed
+
+- API views raise a DRF `DomainError` for service-layer errors instead of building responses from caught exceptions (CodeQL `py/stack-trace-exposure`); response bodies and status codes are unchanged.
+
 ## [0.1.0] - 2026-10-25
 
 First public release.

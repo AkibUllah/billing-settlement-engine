@@ -4,6 +4,7 @@ from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from apps.api_errors import DomainError
 from apps.billing.models import FeeSchedule, Invoice, Transaction
 from apps.billing.serializers import (
     FeeQuoteSerializer,
@@ -37,7 +38,7 @@ class FeeScheduleViewSet(viewsets.ModelViewSet):
         try:
             breakdown = calculate_fee(self.get_object(), serializer.validated_data["amount"])
         except BillingError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            raise DomainError(str(exc), status.HTTP_400_BAD_REQUEST) from exc
         return Response(
             {
                 "schedule": breakdown.schedule,
@@ -69,7 +70,7 @@ class TransactionViewSet(viewsets.ModelViewSet):
         try:
             return super().create(request, *args, **kwargs)
         except BillingError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            raise DomainError(str(exc), status.HTTP_400_BAD_REQUEST) from exc
 
 
 class InvoiceViewSet(viewsets.ReadOnlyModelViewSet):
@@ -86,7 +87,7 @@ class InvoiceViewSet(viewsets.ReadOnlyModelViewSet):
         try:
             invoice = generate_invoice(**serializer.validated_data)
         except BillingError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            raise DomainError(str(exc), status.HTTP_400_BAD_REQUEST) from exc
         return Response(InvoiceSerializer(invoice).data, status=status.HTTP_201_CREATED)
 
     @extend_schema(request=None, responses={200: InvoiceSerializer})
@@ -95,7 +96,7 @@ class InvoiceViewSet(viewsets.ReadOnlyModelViewSet):
         try:
             invoice = issue_invoice(self.get_object())
         except BillingError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+            raise DomainError(str(exc), status.HTTP_409_CONFLICT) from exc
         return Response(InvoiceSerializer(invoice).data)
 
     @action(detail=True, methods=["get"])
