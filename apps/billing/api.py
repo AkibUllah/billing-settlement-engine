@@ -4,7 +4,6 @@ from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from apps.api_errors import DomainError
 from apps.billing.models import FeeSchedule, Invoice, Transaction
 from apps.billing.serializers import (
     FeeQuoteSerializer,
@@ -14,7 +13,6 @@ from apps.billing.serializers import (
     TransactionSerializer,
 )
 from apps.billing.services import (
-    BillingError,
     calculate_fee,
     generate_invoice,
     issue_invoice,
@@ -35,10 +33,7 @@ class FeeScheduleViewSet(viewsets.ModelViewSet):
         """Preview fee + VAT for an amount under this schedule."""
         serializer = FeeQuoteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        try:
-            breakdown = calculate_fee(self.get_object(), serializer.validated_data["amount"])
-        except BillingError as exc:
-            raise DomainError(str(exc), status.HTTP_400_BAD_REQUEST) from exc
+        breakdown = calculate_fee(self.get_object(), serializer.validated_data["amount"])
         return Response(
             {
                 "schedule": breakdown.schedule,
@@ -66,12 +61,6 @@ class TransactionViewSet(viewsets.ModelViewSet):
     search_fields = ["external_ref", "customer_msisdn"]
     ordering_fields = ["occurred_at", "amount"]
 
-    def create(self, request, *args, **kwargs):
-        try:
-            return super().create(request, *args, **kwargs)
-        except BillingError as exc:
-            raise DomainError(str(exc), status.HTTP_400_BAD_REQUEST) from exc
-
 
 class InvoiceViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Invoice.objects.select_related("merchant").prefetch_related("lines")
@@ -84,19 +73,13 @@ class InvoiceViewSet(viewsets.ReadOnlyModelViewSet):
     def generate(self, request):
         serializer = InvoiceGenerateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        try:
-            invoice = generate_invoice(**serializer.validated_data)
-        except BillingError as exc:
-            raise DomainError(str(exc), status.HTTP_400_BAD_REQUEST) from exc
+        invoice = generate_invoice(**serializer.validated_data)
         return Response(InvoiceSerializer(invoice).data, status=status.HTTP_201_CREATED)
 
     @extend_schema(request=None, responses={200: InvoiceSerializer})
     @action(detail=True, methods=["post"])
     def issue(self, request, pk=None):
-        try:
-            invoice = issue_invoice(self.get_object())
-        except BillingError as exc:
-            raise DomainError(str(exc), status.HTTP_409_CONFLICT) from exc
+        invoice = issue_invoice(self.get_object())
         return Response(InvoiceSerializer(invoice).data)
 
     @action(detail=True, methods=["get"])

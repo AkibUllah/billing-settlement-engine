@@ -22,6 +22,10 @@ class BillingError(Exception):
     pass
 
 
+class InvoiceStateError(BillingError):
+    """The invoice is not in a state that allows the requested action."""
+
+
 @dataclass(frozen=True)
 class FeeBreakdown:
     base_amount: Decimal
@@ -203,7 +207,7 @@ def generate_invoice(merchant: Merchant, period_start: date, period_end: date) -
 def issue_invoice(invoice: Invoice) -> Invoice:
     """Issue: recognise fee revenue and VAT output, deducted from what we owe the merchant."""
     if invoice.status != Invoice.Status.DRAFT:
-        raise BillingError(f"invoice {invoice.number} is {invoice.status}, not draft")
+        raise InvoiceStateError(f"invoice {invoice.number} is {invoice.status}, not draft")
     if invoice.total > 0:
         invoice.journal = ledger.post_journal(
             reference=f"INV:{invoice.number}",

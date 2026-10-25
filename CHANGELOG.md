@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- API views raise a DRF `DomainError` for service-layer errors instead of building responses from caught exceptions (CodeQL `py/stack-trace-exposure`); response bodies and status codes are unchanged.
+- Service-layer errors are mapped to responses by one DRF exception handler (`apps/api_errors.py`): state conflicts are 409, other business-rule violations 400. Views no longer build responses from caught exceptions (CodeQL `py/stack-trace-exposure`), and ledger errors that used to surface as 500 are now 400.
 
 ## [0.1.0] - 2026-10-25
 

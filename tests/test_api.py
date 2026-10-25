@@ -231,3 +231,16 @@ def test_invoice_flow_through_api(api, chart, bkash, dhaka_mart):
     assert issued.status_code == 200 and issued.json()["status"] == "issued"
     assert api.post(f"/api/invoices/{invoice['id']}/issue/").status_code == 409
     assert api.get("/api/invoices/", {"status": "issued"}).json()["count"] == 1
+
+
+def test_domain_errors_are_rendered_by_the_exception_handler():
+    from apps.api_errors import domain_exception_handler
+    from apps.billing.services import BillingError, InvoiceStateError
+    from apps.ledger.services import LedgerError
+    from apps.settlement.services import InvalidTransition
+
+    assert domain_exception_handler(InvalidTransition("x"), {}).status_code == 409
+    assert domain_exception_handler(InvoiceStateError("x"), {}).status_code == 409
+    assert domain_exception_handler(BillingError("bad"), {}).data == {"detail": "bad"}
+    assert domain_exception_handler(LedgerError("x"), {}).status_code == 400
+    assert domain_exception_handler(ValueError("x"), {}) is None
