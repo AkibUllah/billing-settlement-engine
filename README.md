@@ -4,6 +4,8 @@
 A Django 4.2 + DRF core for billing merchants and settling with MFS and bank partners: a double-entry ledger with an enforced debits-equals-credits invariant, percentage/fixed/tiered fee schedules with VAT, invoice generation, per-partner settlement batches with a PENDING → APPROVED → PAID workflow, and CSV reconciliation against partner reports.
 
 [![CI](https://github.com/AkibUllah/billing-settlement-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/AkibUllah/billing-settlement-engine/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/AkibUllah/billing-settlement-engine/actions/workflows/codeql.yml/badge.svg)](https://github.com/AkibUllah/billing-settlement-engine/actions/workflows/codeql.yml)
+[![Release](https://img.shields.io/github/v/release/AkibUllah/billing-settlement-engine)](https://github.com/AkibUllah/billing-settlement-engine/releases)
 ![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11-blue)
 ![Django](https://img.shields.io/badge/Django-4.2-092E20)
 ![DRF](https://img.shields.io/badge/DRF-3.14%2B-a30000)
@@ -18,6 +20,16 @@ A Django 4.2 + DRF core for billing merchants and settling with MFS and bank par
 | One-click deploy | [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/AkibUllah/billing-settlement-engine) — `render.yaml` provisions the web service and a free PostgreSQL; the container migrates and seeds on start and prints the API token to the logs. |
 | Local | `docker compose up` (see Quick Start) |
 
+## Screenshots
+
+![Swagger UI API reference](docs/images/api-reference.png)
+
+Live API reference on GitHub Pages, generated from the drf-spectacular schema.
+
+![seed, settle and trial balance](docs/images/terminal-demo.png)
+
+A real local run: `seed_demo` loads a week of transactions, `run_settlement --approve` nets them into one batch per partner, a re-run is a no-op, and the trial balance from the API still balances.
+
 ## Why this exists
 
 When a platform collects payments through bKash, Nagad, Rocket and card acquirers on behalf of many merchants, three questions come up every month: how much does each partner owe us for the period (after their commission and VAT), how much do we owe each merchant (after our fees), and do the partner's statements agree with our records? I have seen this handled in spreadsheets more than once, with fee rules re-typed by hand and settlement amounts that could not be traced back to transactions. This project is the version I wanted: fees frozen on each transaction when it is recorded, every settlement and invoice backed by a balanced journal entry, and a reconciliation report that names the exact references that disagree.
@@ -30,7 +42,7 @@ When a platform collects payments through bKash, Nagad, Rocket and card acquirer
 - **Invoices** per merchant per period: fee and VAT lines, unique numbering, issue step posts revenue + VAT output against the merchant payable; plain-text and CSV renderings
 - **Settlement batches** (`settlement`) per partner per cutoff: gross − refunds − commission − VAT = net; idempotent runs; `PENDING → APPROVED → PAID` with invalid transitions rejected; approval and payment each post a journal
 - **Reconciliation** from an uploaded partner CSV: matched, amount/type mismatches, missing-in-partner, missing-in-ledger, totals, and a status flag on the batch; closed once paid
-- **Management commands**: `seed_demo` (4 partners, 3 merchants, 6 fee schedules, a week of Bangladeshi-flavoured transactions, a demo API token) and `run_settlement --date [--partner] [--approve]`
+- **Management commands**: `seed_demo` (4 partners, 3 merchants, 7 fee schedules, a week of Bangladeshi-flavoured transactions, a demo API token) and `run_settlement --date [--partner] [--approve]`
 - **DRF API**: viewsets with django-filter, search, ordering and pagination; token auth; custom actions for quotes, invoice generation/issue, settlement run/approve/mark-paid/reconcile/export; OpenAPI 3 schema via drf-spectacular with Swagger UI
 - **Admin** registered for every model with inlines, filters and read-only financial fields
 - Health endpoint, 12-factor settings, whitenoise static files, gunicorn Dockerfile, docker compose with PostgreSQL 16
@@ -143,7 +155,7 @@ apps/
 ├── ledger/             # Account, JournalEntry, Posting · post_journal/reverse/trial_balance · API
 ├── billing/            # FeeSchedule, FeeTier, Transaction, Invoice(Line) · fee calc, invoices · API
 └── settlement/         # SettlementBatch, ReconciliationReport · batches, workflow, reconcile · run_settlement
-tests/                  # 36 tests (pytest-django, SQLite)
+tests/                  # 39 tests (pytest-django, SQLite)
 Dockerfile · docker-compose.yml · Makefile · .github/workflows/ci.yml
 ```
 
@@ -158,11 +170,11 @@ Covered: ledger invariants (unbalanced, negative, zero, duplicate reference, mix
 
 ## Roadmap
 
-- Multi-currency settlement with FX journals (schema already carries currency per account/batch)
-- Scheduled settlement runs (Celery beat or cron) and e-mailing invoices
-- PDF invoices (reportlab) alongside the text/CSV renderings
-- Merchant payout batches (the other side of the payable) with bank file export
-- Row-level permissions so partner users see only their own batches
+- [ ] Multi-currency settlement with FX journals (schema already carries currency per account/batch) (#1)
+- [ ] Scheduled settlement runs (Celery beat or cron) and e-mailing invoices (#2)
+- [ ] PDF invoices (reportlab) alongside the text/CSV renderings (#3)
+- [ ] Merchant payout batches (the other side of the payable) with bank file export (#4)
+- [ ] Row-level permissions so partner users see only their own batches (#5)
 
 ## License
 
