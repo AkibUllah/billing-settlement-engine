@@ -3,7 +3,7 @@ VENV ?= .venv
 PY := $(VENV)/bin/python
 MANAGE := $(PY) manage.py
 
-.PHONY: help venv install migrate makemigrations seed dev test cov lint fmt settle payout shell openapi docker-up docker-down clean
+.PHONY: help venv install migrate makemigrations seed dev test test-pg cov lint fmt settle payout shell openapi docker-up docker-down clean
 
 help: ## Show targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
@@ -38,6 +38,9 @@ shell: ## Django shell
 
 test: ## Run tests (SQLite)
 	$(PY) -m pytest
+
+test-pg: ## Run tests against PostgreSQL, including the concurrency tests (needs DATABASE_URL)
+	$(PY) -m pytest --create-db
 
 cov: ## Tests with coverage
 	$(PY) -m pytest --cov=apps --cov=config --cov-report=term-missing
