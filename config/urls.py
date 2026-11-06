@@ -8,6 +8,7 @@ from rest_framework.routers import DefaultRouter
 from apps.accounts.api import MerchantViewSet, PartnerViewSet
 from apps.billing.api import FeeScheduleViewSet, InvoiceViewSet, TransactionViewSet
 from apps.ledger.api import AccountViewSet, JournalEntryViewSet, TrialBalanceView
+from apps.payouts.api import PayoutBatchViewSet, PayoutLineViewSet
 from apps.settlement.api import ReconciliationReportViewSet, SettlementBatchViewSet
 
 router = DefaultRouter()
@@ -20,6 +21,8 @@ router.register("settlements/batches", SettlementBatchViewSet, basename="settlem
 router.register(
     "settlements/reconciliations", ReconciliationReportViewSet, basename="reconciliation"
 )
+router.register("payouts/batches", PayoutBatchViewSet, basename="payout-batch")
+router.register("payouts/lines", PayoutLineViewSet, basename="payout-line")
 router.register("ledger/accounts", AccountViewSet, basename="ledger-account")
 router.register("ledger/journals", JournalEntryViewSet, basename="ledger-journal")
 

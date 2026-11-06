@@ -13,10 +13,12 @@ from rest_framework.views import exception_handler
 
 from apps.billing.services import BillingError, InvoiceStateError
 from apps.ledger.services import LedgerError
+from apps.payouts.services import InvalidTransition as PayoutTransitionError
+from apps.payouts.services import PayoutError, StalePayout
 from apps.settlement.services import InvalidTransition, SettlementError
 
-CONFLICT_ERRORS = (InvalidTransition, InvoiceStateError)
-BAD_REQUEST_ERRORS = (BillingError, SettlementError, LedgerError)
+CONFLICT_ERRORS = (InvalidTransition, InvoiceStateError, PayoutTransitionError, StalePayout)
+BAD_REQUEST_ERRORS = (BillingError, SettlementError, LedgerError, PayoutError)
 
 
 def domain_exception_handler(exc, context):
