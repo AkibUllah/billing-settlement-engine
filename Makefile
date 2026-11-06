@@ -3,7 +3,7 @@ VENV ?= .venv
 PY := $(VENV)/bin/python
 MANAGE := $(PY) manage.py
 
-.PHONY: help venv install migrate makemigrations seed dev test cov lint fmt settle shell openapi docker-up docker-down clean
+.PHONY: help venv install migrate makemigrations seed dev test cov lint fmt settle payout shell openapi docker-up docker-down clean
 
 help: ## Show targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
@@ -29,6 +29,9 @@ dev: migrate ## Run the dev server on :8000
 
 settle: ## Run settlement (DATE=YYYY-MM-DD, default yesterday)
 	$(MANAGE) run_settlement $(if $(DATE),--date $(DATE),)
+
+payout: ## Draft a payout batch from merchant payable balances (DATE=YYYY-MM-DD, default today)
+	$(MANAGE) run_payouts $(if $(DATE),--date $(DATE),)
 
 shell: ## Django shell
 	$(MANAGE) shell
