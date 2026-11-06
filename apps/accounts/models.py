@@ -2,7 +2,17 @@
 
 from __future__ import annotations
 
+from django.core.exceptions import ValidationError
+from django.core.validators import RegexValidator
 from django.db import models
+
+# Payout destinations are written into bank files, so they stay within a strict character set.
+validate_routing_number = RegexValidator(r"^[0-9]{9}\Z", "Routing number must be exactly 9 digits.")
+validate_account_number = RegexValidator(r"^[0-9]{6,20}\Z", "Account number must be 6-20 digits.")
+validate_account_name = RegexValidator(
+    r"^[A-Za-z0-9][A-Za-z0-9 .&'/()-]{0,34}\Z",
+    "Account name must be 1-35 ASCII letters, digits, spaces or . & ' / ( ) -",
+)
 
 
 class TimeStamped(models.Model):
@@ -53,6 +63,15 @@ class Merchant(TimeStamped):
     )
     address = models.CharField(max_length=300, blank=True)
     contact_email = models.EmailField(blank=True)
+    bank_routing_number = models.CharField(
+        max_length=9, blank=True, validators=[validate_routing_number]
+    )
+    bank_account_number = models.CharField(
+        max_length=20, blank=True, validators=[validate_account_number]
+    )
+    bank_account_name = models.CharField(
+        max_length=35, blank=True, validators=[validate_account_name]
+    )
     fee_schedule = models.ForeignKey(
         "billing.FeeSchedule",
         null=True,
@@ -68,3 +87,21 @@ class Merchant(TimeStamped):
 
     def __str__(self) -> str:
         return f"{self.name} ({self.code})"
+
+    def bank_detail_errors(self) -> list[str]:
+        """Why this merchant cannot receive a bank payout; empty when the details are usable.
+
+        `save()` does not run field validators, so payouts check them again at the point of use.
+        """
+        errors = []
+        for field_name in ("bank_routing_number", "bank_account_number", "bank_account_name"):
+            field = self._meta.get_field(field_name)
+            value = getattr(self, field_name)
+            if not value:
+                errors.append(f"{field_name} is missing")
+                continue
+            try:
+                field.run_validators(value)
+            except ValidationError as exc:
+                errors.append(f"{field_name}: {' '.join(exc.messages)}")
+        return errors
