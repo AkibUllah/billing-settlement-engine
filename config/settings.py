@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     "apps.ledger",
     "apps.billing",
     "apps.settlement",
+    "apps.payouts",
 ]
 
 MIDDLEWARE = [
