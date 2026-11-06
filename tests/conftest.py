@@ -123,6 +123,14 @@ def make_txn(partner, merchant, amount, *, ref, type=Transaction.Type.PAYMENT, d
     )
 
 
+def set_bank_details(*merchants):
+    for index, merchant in enumerate(merchants, start=1):
+        merchant.bank_routing_number = f"99000000{index}"
+        merchant.bank_account_number = f"70010000{index:04d}"
+        merchant.bank_account_name = (merchant.legal_name or merchant.name)[:35]
+        merchant.save()
+
+
 @pytest.fixture
 def api(db):
     user = get_user_model().objects.create_user("ops", "ops@example.com", "pass12345")
