@@ -7,6 +7,7 @@ from datetime import date
 from decimal import Decimal
 from uuid import uuid4
 
+from django.conf import settings
 from django.db import transaction as db_transaction
 from django.utils import timezone
 
@@ -14,6 +15,7 @@ from apps.accounts.models import Merchant
 from apps.common import ZERO, money
 from apps.ledger import services as ledger
 from apps.ledger.models import Posting
+from apps.payouts import bank_file
 from apps.payouts.models import PayoutAllocation, PayoutBatch, PayoutLine
 from apps.settlement.models import SettlementBatch
 
@@ -245,3 +247,42 @@ def cancel_batch(batch: PayoutBatch, reason: str = "cancelled") -> PayoutBatch:
     batch.cancelled_at = now
     batch.save(update_fields=["status", "cancelled_at"])
     return batch
+
+
+def render_bank_file(batch: PayoutBatch) -> str:
+    return bank_file.render(
+        originator=settings.PAYOUT_ORIGINATOR_ID,
+        batch_reference=batch.reference,
+        value_date=batch.value_date,
+        currency=batch.currency,
+        entries=batch.lines.all(),
+    )
+
+
+@db_transaction.atomic
+def export_batch(batch: PayoutBatch) -> PayoutBatch:
+    """APPROVED -> EXPORTED. Stores the validated file, as a record of what the bank received."""
+    batch = _lock_batch(batch)
+    _transition(batch, PayoutBatch.Status.EXPORTED)
+    content = render_bank_file(batch)
+    try:
+        parsed = bank_file.parse(content)
+    except bank_file.BankFileError as exc:
+        raise PayoutError(f"{batch.reference}: generated file is invalid: {exc}") from exc
+    if len(parsed.entries) != batch.line_count or parsed.total != batch.total_amount:
+        raise PayoutError(f"{batch.reference}: generated file does not match the batch totals")
+    batch.bank_file = content
+    batch.bank_file_sha256 = bank_file.sha256(content)
+    batch.exported_at = timezone.now()
+    batch.save(update_fields=["status", "bank_file", "bank_file_sha256", "exported_at"])
+    return batch
+
+
+def bank_file_content(batch: PayoutBatch) -> str:
+    if not batch.bank_file:
+        raise InvalidTransition(f"{batch.reference} has not been exported")
+    return batch.bank_file
+
+
+def bank_file_name(batch: PayoutBatch) -> str:
+    return f"{batch.reference}.{bank_file.FORMAT.lower()}.csv"
