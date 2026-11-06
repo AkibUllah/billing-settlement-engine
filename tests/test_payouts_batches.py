@@ -6,9 +6,18 @@ from django.utils import timezone
 
 from apps.billing.services import generate_invoice, issue_invoice
 from apps.ledger import services as ledger
-from apps.payouts.models import PayoutBatch, PayoutLine
-from apps.payouts.services import NothingToPay, PayoutError, create_batch
-from apps.settlement.services import approve_batch
+from apps.ledger.models import JournalEntry
+from apps.payouts.models import PayoutAllocation, PayoutBatch, PayoutLine
+from apps.payouts.services import (
+    InvalidTransition,
+    NothingToPay,
+    PayoutError,
+    StalePayout,
+    approve_batch,
+    cancel_batch,
+    create_batch,
+)
+from apps.settlement.services import approve_batch as approve_settlement
 from apps.settlement.services import create_batch as create_settlement
 from tests.conftest import make_txn, set_bank_details
 
@@ -18,7 +27,7 @@ YESTERDAY = (timezone.localtime() - timedelta(days=1)).date()
 
 
 def settle(partner, cutoff=YESTERDAY):
-    return approve_batch(create_settlement(partner, cutoff))
+    return approve_settlement(create_settlement(partner, cutoff))
 
 
 @pytest.fixture
@@ -119,3 +128,118 @@ def test_no_balances_at_all(db):
 def test_negative_minimum_rejected(db):
     with pytest.raises(PayoutError, match="cannot be negative"):
         create_batch(minimum_amount=Decimal("-1"))
+
+
+def bank_balance():
+    return ledger.account("1000").balance()
+
+
+def test_approval_posts_one_balanced_journal_per_line(funded, dhaka_mart, ctg_traders, api):
+    batch = approve_batch(create_batch(), user=api.user)
+    assert batch.status == PayoutBatch.Status.APPROVED
+    assert batch.approved_by == api.user and batch.approved_at
+    assert ledger.merchant_payable(dhaka_mart).balance() == Decimal("0.00")
+    assert ledger.merchant_payable(ctg_traders).balance() == Decimal("0.00")
+    assert bank_balance() == Decimal("-2700.00")
+    for line in batch.lines.select_related("journal", "merchant"):
+        debits, credits = line.journal.totals()
+        assert debits == credits == line.amount
+        postings = {p.direction: p.account.code for p in line.journal.postings.all()}
+        assert postings == {"debit": f"2000-{line.merchant.code}", "credit": "1000"}
+    assert ledger.trial_balance()["balanced"]
+
+
+def test_second_run_after_approval_pays_nothing_more(funded):
+    approve_batch(create_batch())
+    with pytest.raises(NothingToPay):
+        create_batch()
+
+
+def test_approving_twice_is_rejected_and_posts_nothing(funded):
+    batch = approve_batch(create_batch())
+    journals = JournalEntry.objects.count()
+    with pytest.raises(InvalidTransition, match="cannot move from approved to approved"):
+        approve_batch(batch)
+    assert JournalEntry.objects.count() == journals
+
+
+def test_new_settlement_is_paid_while_the_previous_line_is_in_flight(funded, bkash, dhaka_mart):
+    first = approve_batch(create_batch())
+    make_txn(bkash, dhaka_mart, "500", ref="LATER", days_ago=0)
+    second_settlement = settle(bkash, timezone.localdate())
+
+    line = create_batch().lines.get()
+    assert first.lines.filter(merchant=dhaka_mart).exists()
+    assert line.amount == Decimal("500.00")
+    assert [a.settlement_batch for a in line.allocations.all()] == [second_settlement]
+
+
+def test_invoice_after_drafting_makes_approval_refuse_the_stale_amount(funded, dhaka_mart):
+    batch = create_batch()
+    today = timezone.localdate()
+    issue_invoice(
+        generate_invoice(dhaka_mart, today - timedelta(days=30), today + timedelta(days=1))
+    )
+    with pytest.raises(StalePayout, match="DHAKAMART payable is .* below the line amount 700.00"):
+        approve_batch(batch)
+    batch.refresh_from_db()
+    assert batch.status == PayoutBatch.Status.DRAFT
+    assert not JournalEntry.objects.filter(source="payout:approve").exists()
+
+
+def test_credits_after_drafting_stay_for_the_next_batch(funded, bkash, dhaka_mart):
+    batch = create_batch(merchants=[dhaka_mart])
+    make_txn(bkash, dhaka_mart, "500", ref="LATER", days_ago=0)
+    settle(bkash, timezone.localdate())
+    approve_batch(batch)
+    assert ledger.merchant_payable(dhaka_mart).balance() == Decimal("500.00")
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        ({"is_active": False}, "DHAKAMART is inactive"),
+        ({"bank_account_number": "7999999999"}, "bank details changed"),
+    ],
+)
+def test_approval_refuses_merchants_changed_since_drafting(funded, dhaka_mart, change, message):
+    batch = create_batch(merchants=[dhaka_mart])
+    for field, value in change.items():
+        setattr(dhaka_mart, field, value)
+    dhaka_mart.save()
+    with pytest.raises(StalePayout, match=message):
+        approve_batch(batch)
+
+
+def test_cancelling_a_draft_frees_merchants_and_settlements(funded, dhaka_mart):
+    batch = cancel_batch(create_batch(), "wrong value date")
+    assert batch.status == PayoutBatch.Status.CANCELLED and batch.cancelled_at
+    assert set(batch.lines.values_list("status", flat=True)) == {PayoutLine.Status.CANCELLED}
+    assert batch.lines.first().failure_reason == "wrong value date"
+    assert not PayoutAllocation.objects.filter(released_at__isnull=True).exists()
+    assert not JournalEntry.objects.filter(source="payout:approve").exists()
+
+    again = create_batch()
+    assert again.line_count == 2
+    assert PayoutAllocation.objects.filter(released_at__isnull=True).count() == 2
+
+
+def test_cancelling_an_approved_batch_reverses_every_journal(funded, dhaka_mart, ctg_traders):
+    batch = approve_batch(create_batch())
+    batch = cancel_batch(batch)
+    assert ledger.merchant_payable(dhaka_mart).balance() == Decimal("700.00")
+    assert ledger.merchant_payable(ctg_traders).balance() == Decimal("2000.00")
+    assert bank_balance() == Decimal("0.00")
+    for line in batch.lines.all():
+        assert line.journal.status == JournalEntry.Status.REVERSED
+        assert line.reversal_journal.reverses == line.journal
+    assert ledger.trial_balance()["balanced"]
+    assert create_batch().total_amount == Decimal("2700.00")
+
+
+def test_cancelling_twice_is_rejected(funded):
+    batch = cancel_batch(create_batch())
+    with pytest.raises(InvalidTransition):
+        cancel_batch(batch)
+    with pytest.raises(InvalidTransition):
+        approve_batch(batch)

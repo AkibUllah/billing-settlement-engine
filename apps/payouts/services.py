@@ -30,6 +30,10 @@ class NothingToPay(PayoutError):
     pass
 
 
+class StalePayout(PayoutError):
+    """The line no longer matches the merchant: cancel the batch and draft a new one."""
+
+
 @dataclass(frozen=True)
 class Candidate:
     merchant: Merchant
@@ -144,4 +148,100 @@ def create_batch(
             )
             for settlement, credited in _uncovered_settlements(merchant)
         )
+    return batch
+
+
+def _lock_batch(batch: PayoutBatch) -> PayoutBatch:
+    """Re-read under a row lock, so concurrent workflow calls run one at a time on fresh state."""
+    return PayoutBatch.objects.select_for_update().get(pk=batch.pk)
+
+
+def _transition(record: PayoutBatch | PayoutLine, target: str) -> None:
+    if not record.can_transition(target):
+        raise InvalidTransition(f"{record.reference}: cannot move from {record.status} to {target}")
+    record.status = target
+
+
+def _staleness(line: PayoutLine, merchant: Merchant) -> str | None:
+    """Why this line must not be paid any more, if it must not."""
+    if not merchant.is_active:
+        return f"{merchant.code} is inactive"
+    if (line.routing_number, line.account_number, line.account_name) != (
+        merchant.bank_routing_number,
+        merchant.bank_account_number,
+        merchant.bank_account_name,
+    ):
+        return f"{merchant.code} bank details changed after the batch was drafted"
+    balance = ledger.merchant_payable(merchant).balance()
+    if line.amount > balance:
+        return f"{merchant.code} payable is {balance}, below the line amount {line.amount}"
+    return None
+
+
+def _post_line(line: PayoutLine, merchant: Merchant) -> None:
+    line.journal = ledger.post_journal(
+        reference=f"PAYOUT:{line.reference}",
+        description=f"Payout {line.reference} to {merchant.name}",
+        source="payout:approve",
+        lines=[
+            ledger.debit(ledger.merchant_payable(merchant), line.amount, "payout"),
+            ledger.credit(ledger.account("1000"), line.amount, line.reference),
+        ],
+    )
+    line.save(update_fields=["journal"])
+
+
+def _reverse_line(line: PayoutLine, reason: str) -> None:
+    """Put the money back on the payable and free the settlements for a later batch."""
+    now = timezone.now()
+    line.reversal_journal = ledger.reverse_journal(
+        line.journal,
+        reference=f"{line.journal.reference}:REV",
+        description=f"Payout {line.reference} {line.status}: {reason}"[:300],
+    )
+    line.reversed_at = now
+    line.allocations.update(released_at=now)
+
+
+@db_transaction.atomic
+def approve_batch(batch: PayoutBatch, user=None) -> PayoutBatch:
+    """DRAFT -> APPROVED. Posts Dr merchant payable / Cr bank for each line, or nothing at all."""
+    batch = _lock_batch(batch)
+    _transition(batch, PayoutBatch.Status.APPROVED)
+    lines = list(batch.lines.order_by("sequence"))
+    merchants = {
+        m.pk: m
+        for m in Merchant.objects.select_for_update()
+        .filter(pk__in=[line.merchant_id for line in lines])
+        .order_by("code")
+    }
+    stale = [_staleness(line, merchants[line.merchant_id]) for line in lines]
+    if problems := [problem for problem in stale if problem]:
+        raise StalePayout(f"{batch.reference} is stale: " + "; ".join(problems))
+    for line in lines:
+        _post_line(line, merchants[line.merchant_id])
+    batch.approved_by = user if getattr(user, "pk", None) else None
+    batch.approved_at = timezone.now()
+    batch.save(update_fields=["status", "approved_by", "approved_at"])
+    return batch
+
+
+@db_transaction.atomic
+def cancel_batch(batch: PayoutBatch, reason: str = "cancelled") -> PayoutBatch:
+    """DRAFT or APPROVED -> CANCELLED. Once a file has left, resolve lines one by one instead."""
+    batch = _lock_batch(batch)
+    _transition(batch, PayoutBatch.Status.CANCELLED)
+    now = timezone.now()
+    for line in batch.lines.select_related("journal").order_by("sequence"):
+        _transition(line, PayoutLine.Status.CANCELLED)
+        if line.journal_id:
+            _reverse_line(line, reason)
+        else:
+            line.allocations.update(released_at=now)
+        line.failure_reason = reason[:200]
+        line.save(
+            update_fields=["status", "reversal_journal", "reversed_at", "failure_reason"],
+        )
+    batch.cancelled_at = now
+    batch.save(update_fields=["status", "cancelled_at"])
     return batch
