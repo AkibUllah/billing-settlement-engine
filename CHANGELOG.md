@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Merchant payout batches (`apps/payouts`): `draft → approved → exported → paid` with cancellation before export, amounts taken from the merchant payable balance, one balanced `Dr merchant payable / Cr bank` journal per line, and per-line paid, failed and returned outcomes that reverse the journal.
+- Settlement allocations that record which settlements a payout line covers, with database constraints so a settlement cannot be paid twice while its payout stands.
+- Bank file export in DCN1, the format of the fictional Demo Clearing Network: deterministic, validated before export and stored with its SHA-256.
+- `payouts/batches/` and `payouts/lines/` API routes, a read-only admin and the `run_payouts` command.
+- Bank details on merchants (`bank_routing_number`, `bank_account_number`, `bank_account_name`) and the `PAYOUT_ORIGINATOR_ID` setting.
+- CI job running the test suite on PostgreSQL 16, including concurrency tests that SQLite skips.
 - CodeQL code scanning workflow and Dependabot configuration (pip, Docker, GitHub Actions).
 - API reference and terminal screenshots in the README.
 - Roadmap tracked as GitHub issues under the `v0.2.0` milestone.

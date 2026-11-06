@@ -1,7 +1,7 @@
 <!-- topics: django,django-rest-framework,python,billing,settlement,double-entry-ledger,fintech,invoicing,postgresql -->
 # Billing & Settlement Engine
 
-A Django 4.2 + DRF core for billing merchants and settling with MFS and bank partners: a double-entry ledger with an enforced debits-equals-credits invariant, percentage/fixed/tiered fee schedules with VAT, invoice generation, per-partner settlement batches with a PENDING → APPROVED → PAID workflow, and CSV reconciliation against partner reports.
+A Django 4.2 + DRF core for billing merchants and settling with MFS and bank partners: a double-entry ledger with an enforced debits-equals-credits invariant, percentage/fixed/tiered fee schedules with VAT, invoice generation, per-partner settlement batches with a PENDING → APPROVED → PAID workflow, CSV reconciliation against partner reports, and merchant payout batches with a validated bank file export.
 
 [![CI](https://github.com/AkibUllah/billing-settlement-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/AkibUllah/billing-settlement-engine/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/AkibUllah/billing-settlement-engine/actions/workflows/codeql.yml/badge.svg)](https://github.com/AkibUllah/billing-settlement-engine/actions/workflows/codeql.yml)
@@ -42,8 +42,9 @@ When a platform collects payments through bKash, Nagad, Rocket and card acquirer
 - **Invoices** per merchant per period: fee and VAT lines, unique numbering, issue step posts revenue + VAT output against the merchant payable; plain-text and CSV renderings
 - **Settlement batches** (`settlement`) per partner per cutoff: gross − refunds − commission − VAT = net; idempotent runs; `PENDING → APPROVED → PAID` with invalid transitions rejected; approval and payment each post a journal
 - **Reconciliation** from an uploaded partner CSV: matched, amount/type mismatches, missing-in-partner, missing-in-ledger, totals, and a status flag on the batch; closed once paid
-- **Management commands**: `seed_demo` (4 partners, 3 merchants, 7 fee schedules, a week of Bangladeshi-flavoured transactions, a demo API token) and `run_settlement --date [--partner] [--approve]`
-- **DRF API**: viewsets with django-filter, search, ordering and pagination; token auth; custom actions for quotes, invoice generation/issue, settlement run/approve/mark-paid/reconcile/export; OpenAPI 3 schema via drf-spectacular with Swagger UI
+- **Merchant payouts** (`payouts`): batches that pay each merchant's full payable balance, `draft → approved → exported → paid` with illegal transitions rejected, one balanced `Dr merchant payable / Cr bank` journal per line, a deterministic bank file validated before export, per-line paid/failed/returned outcomes with journal reversal, and a record of which settlements each line covers so none is paid twice
+- **Management commands**: `seed_demo` (4 partners, 3 merchants, 7 fee schedules, a week of Bangladeshi-flavoured transactions, a demo API token), `run_settlement --date [--partner] [--approve]` and `run_payouts [--date] [--minimum] [--merchant] [--approve] [--export-dir]`
+- **DRF API**: viewsets with django-filter, search, ordering and pagination; token auth; custom actions for quotes, invoice generation/issue, settlement run/approve/mark-paid/reconcile/export, payout run/approve/cancel/export/mark-paid and line outcomes; OpenAPI 3 schema via drf-spectacular with Swagger UI
 - **Admin** registered for every model with inlines, filters and read-only financial fields
 - Health endpoint, 12-factor settings, whitenoise static files, gunicorn Dockerfile, docker compose with PostgreSQL 16
 
@@ -66,13 +67,21 @@ flowchart TB
         GEN[generate_invoice merchant, period] --> INV[Invoice + lines]
         INV -- issue --> J3[Journal: Dr Merchant Payable / Cr Fee Revenue, Cr VAT Output]
     end
+    subgraph Payouts["payouts app"]
+        PRUN[run payouts] --> PB[PayoutBatch + PayoutLines<br/>one line per merchant = full payable]
+        PB -- approve --> J4[Journal per line: Dr Merchant Payable / Cr Bank]
+        PB -- export --> FILE[DCN1 bank file<br/>validated, stored, SHA-256]
+        FILE -- bank outcome --> OUT{paid · failed · returned}
+        OUT -- failed or returned --> J5[Reversal of that line's journal<br/>settlements freed for a later batch]
+    end
     subgraph Ledger["ledger app"]
-        J1 & J2 & J3 --> L[(JournalEntry + Postings<br/>Σdebits == Σcredits)]
+        J1 & J2 & J3 & J4 & J5 --> L[(JournalEntry + Postings<br/>Σdebits == Σcredits)]
         L --> TB[Trial balance]
     end
     T --> RUN
     T --> GEN
-    API[DRF API · admin · commands] --> Settlement & Billing & Ledger
+    L -- merchant payable balances --> PRUN
+    API[DRF API · admin · commands] --> Settlement & Billing & Payouts & Ledger
 ```
 
 Design notes:
@@ -81,6 +90,10 @@ Design notes:
 - **Fees are historical facts.** A transaction stores the partner and merchant fee computed from the schedules in force when it was recorded, so repricing never changes settled or invoiced amounts.
 - **Settlement is a snapshot with a state machine.** A batch locks its transactions (`status=settled`, `settlement_batch` set) so a re-run cannot double-count; transitions are a whitelist on the model and each step posts its own journal, which makes the ledger the audit trail.
 - **Reconciliation is append-only.** Every upload produces a report; the batch carries the latest status, and paid batches refuse further uploads.
+- **Payouts read the ledger, not a running total.** A line's amount is the merchant's payable balance at creation, so settlements credited and invoices deducted are both already in it.
+- **A settlement is paid once.** Each line records the settlements it covers (`PayoutAllocation`), and a partial unique index allows one live allocation per settlement and merchant. Another index allows one unposted line per merchant, because a drafted amount is still in the balance. A failed, returned or cancelled line releases its allocations, so the money is paid again by exactly one later batch. Workflow steps lock the batch, line and merchant rows, and the races are tested on PostgreSQL.
+- **Each line has its own journal,** so one bad account reverses without touching the rest of the batch. Approval refuses a stale batch (payable now below the line amount, merchant inactive, or bank details edited since drafting) and posts nothing; cancel it and draft a new one.
+- **The bank is credited at approval,** as the funds are committed from then on; failed lines and returns put them back through `reverse_journal`. Payable balances include settlements that are approved but not yet remitted by the partner, so run payouts with that in mind if you do not want to fund merchants ahead of partner cash.
 - **Money is `Decimal(18, 2)`** with `ROUND_HALF_UP` through one helper (`apps.common.money`); BDT formatting uses lakh/crore grouping.
 
 ## Tech Stack
@@ -91,7 +104,7 @@ Design notes:
 | Database | SQLite (dev/tests), PostgreSQL 16 (compose) via dj-database-url + psycopg 3 |
 | Auth | DRF TokenAuthentication (+ session for the browsable API/admin) |
 | Serving | gunicorn, whitenoise |
-| Tooling | pytest-django, ruff, Makefile, GitHub Actions (3.10/3.11, migration check, docker build) |
+| Tooling | pytest-django, ruff, Makefile, GitHub Actions (3.10/3.11, PostgreSQL 16 test job, migration check, docker build) |
 
 ## Quick Start
 
@@ -126,6 +139,18 @@ curl -s -H "Authorization: Token $TOKEN" -F file=@partner-report.csv localhost:8
 curl -s -H "Authorization: Token $TOKEN" localhost:8000/api/ledger/trial-balance/
 ```
 
+Pay merchants once settlements are approved:
+
+```bash
+make payout                                                  # draft a batch from payable balances
+curl -s -H "Authorization: Token $TOKEN" -X POST localhost:8000/api/payouts/batches/1/approve/
+curl -s -H "Authorization: Token $TOKEN" -X POST localhost:8000/api/payouts/batches/1/export/
+curl -s -H "Authorization: Token $TOKEN" -o payout.csv localhost:8000/api/payouts/batches/1/bank-file/
+curl -s -H "Authorization: Token $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"reason": "closed account"}' localhost:8000/api/payouts/lines/1/fail/
+curl -s -H "Authorization: Token $TOKEN" -X POST localhost:8000/api/payouts/batches/1/mark-paid/
+```
+
 ## API
 
 Base path `/api/`. All routes except `health/` require `Authorization: Token <key>` (get one from `POST auth/token/`).
@@ -140,10 +165,27 @@ Base path `/api/`. All routes except `health/` require `Authorization: Token <ke
 | `GET` | `invoices/` | List/fetch; `POST generate/ {merchant, period_start, period_end}`; `POST {id}/issue/`; `GET {id}/text/`; `GET {id}/export/` (CSV) |
 | `GET` | `settlements/batches/` | List/fetch; `POST run/ {cutoff_date, partners?}`; `POST {id}/approve/`; `POST {id}/mark-paid/ {payment_reference}`; `POST {id}/reconcile/` (multipart `file`); `GET {id}/export/` (CSV) |
 | `GET` | `settlements/reconciliations/` | Reconciliation reports (filter `batch`, `is_clean`) |
+| `GET` | `payouts/batches/` | List/fetch (detail includes lines and outcome totals); `POST run/ {value_date?, minimum_amount?, merchants?}`; `POST {id}/approve/`; `POST {id}/cancel/ {reason?}`; `POST {id}/export/`; `GET {id}/bank-file/`; `POST {id}/mark-paid/ {bank_reference?}` |
+| `GET` | `payouts/lines/` | List/fetch (filter `batch`, `merchant`, `status`); `POST {id}/mark-paid/ {bank_reference?}`; `POST {id}/fail/ {reason}`; `POST {id}/return/ {reason}` |
 | `GET` | `ledger/accounts/` | Accounts with live `balance`; `ledger/journals/` with postings; `ledger/trial-balance/` |
 | `GET` | `schema/`, `docs/` | OpenAPI 3 JSON and Swagger UI |
 
 Partner report CSV for reconciliation: header `external_ref,type,amount` (type `payment` or `refund`).
+
+Illegal state transitions and stale payout batches answer `409`; other business-rule violations, including a payout run with nobody to pay, answer `400`.
+
+### Bank file
+
+Payouts export to DCN1, the format of the fictional Demo Clearing Network used here in place of a real bank's layout. Implement a real one by adding a renderer and parser next to `apps/payouts/bank_file.py`.
+
+```
+H,DCN1,DEMOPLATFORM,PO-20261108-000001,20261108,BDT
+D,1,990000002,700100000002,Chittagong Traders & Co.,2000.00,PO-20261108-000001-0001
+D,2,990000001,700100000001,Dhaka Mart Ltd.,700.50,PO-20261108-000001-0002
+T,2,2700.50,1980000003
+```
+
+Records are header, entries (sequence, routing number, account number, account name, amount, reference) and a trailer with the count, the total and a routing hash (sum of routing numbers modulo 10^10). The file holds no timestamps, so a batch always renders to the same bytes. The originator comes from `PAYOUT_ORIGINATOR_ID`. Merchants need `bank_routing_number`, `bank_account_number` and `bank_account_name` set; a merchant without valid details is skipped and listed in the batch's `skipped` field.
 
 ## Project Structure
 
@@ -154,8 +196,9 @@ apps/
 ├── accounts/           # Partner, Merchant · API · admin · seed_demo command
 ├── ledger/             # Account, JournalEntry, Posting · post_journal/reverse/trial_balance · API
 ├── billing/            # FeeSchedule, FeeTier, Transaction, Invoice(Line) · fee calc, invoices · API
-└── settlement/         # SettlementBatch, ReconciliationReport · batches, workflow, reconcile · run_settlement
-tests/                  # 39 tests (pytest-django, SQLite)
+├── settlement/         # SettlementBatch, ReconciliationReport · batches, workflow, reconcile · run_settlement
+└── payouts/            # PayoutBatch, PayoutLine, PayoutAllocation · workflow, DCN1 bank file · API · run_payouts
+tests/                  # 165 tests (pytest-django; SQLite, plus 7 race tests on PostgreSQL)
 Dockerfile · docker-compose.yml · Makefile · .github/workflows/ci.yml
 ```
 
@@ -164,16 +207,16 @@ Dockerfile · docker-compose.yml · Makefile · .github/workflows/ci.yml
 ```bash
 make test        # pytest-django against SQLite
 make lint        # ruff + migration drift check
+DATABASE_URL=postgres://billing:billing@127.0.0.1:5432/billing make test-pg   # adds the race tests
 ```
 
-Covered: ledger invariants (unbalanced, negative, zero, duplicate reference, mixed currency, DB check constraint, tampering detection, reversal, trial balance); fee calculation for every schedule type including slab/marginal tiers, min/max caps, VAT and half-up rounding; transaction fee freezing and refunds; batch netting with refunds and cutoff filtering; per-partner grouping and idempotent re-runs; the full PENDING → APPROVED → PAID workflow with ledger balances checked after each step and invalid transitions rejected; CSV export; clean and discrepant reconciliation plus bad-file and closed-batch handling; invoice generation, issue postings, empty periods and renderings; both management commands; and the API end to end (token auth, schema, CRUD with filters, tiered schedule quotes, transaction immutability, settlement run/export/reconcile/approve/mark-paid, invoice generate/issue, trial balance).
+Covered: ledger invariants (unbalanced, negative, zero, duplicate reference, mixed currency, DB check constraint, tampering detection, reversal, trial balance); fee calculation for every schedule type including slab/marginal tiers, min/max caps, VAT and half-up rounding; transaction fee freezing and refunds; batch netting with refunds and cutoff filtering; per-partner grouping and idempotent re-runs; the full PENDING → APPROVED → PAID workflow with ledger balances checked after each step and invalid transitions rejected; CSV export; clean and discrepant reconciliation plus bad-file and closed-batch handling; invoice generation, issue postings, empty periods and renderings; both management commands; and the API end to end (token auth, schema, CRUD with filters, tiered schedule quotes, transaction immutability, settlement run/export/reconcile/approve/mark-paid, invoice generate/issue, trial balance); and payouts: amounts against ledger balances, journals and reversals, stale approval, the bank file byte for byte and against tampering, and concurrent runs, approvals, failures and returns on PostgreSQL.
 
 ## Roadmap
 
 - [ ] Multi-currency settlement with FX journals (schema already carries currency per account/batch) (#1)
 - [ ] Scheduled settlement runs (Celery beat or cron) and e-mailing invoices (#2)
 - [ ] PDF invoices (reportlab) alongside the text/CSV renderings (#3)
-- [ ] Merchant payout batches (the other side of the payable) with bank file export (#4)
 - [ ] Row-level permissions so partner users see only their own batches (#5)
 
 ## License
