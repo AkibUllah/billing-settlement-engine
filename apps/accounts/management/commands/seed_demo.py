@@ -129,7 +129,7 @@ class Command(BaseCommand):
             partners.append(partner)
 
         merchants = []
-        for code, name, legal, address, schedule_name in MERCHANTS:
+        for index, (code, name, legal, address, schedule_name) in enumerate(MERCHANTS, start=1):
             merchant, _ = Merchant.objects.update_or_create(
                 code=code,
                 defaults={
@@ -138,6 +138,9 @@ class Command(BaseCommand):
                     "address": address,
                     "bin_number": f"00{rng.randint(1000000, 9999999)}-0{rng.randint(100, 999)}",
                     "contact_email": f"finance@{code.lower()}.example",
+                    "bank_routing_number": f"99000000{index}",
+                    "bank_account_number": f"70010000{index:04d}",
+                    "bank_account_name": legal[:35],
                     "fee_schedule": schedules[schedule_name],
                 },
             )
