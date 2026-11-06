@@ -286,3 +286,86 @@ def bank_file_content(batch: PayoutBatch) -> str:
 
 def bank_file_name(batch: PayoutBatch) -> str:
     return f"{batch.reference}.{bank_file.FORMAT.lower()}.csv"
+
+
+def _lock_line(line: PayoutLine) -> tuple[PayoutBatch, PayoutLine]:
+    """Batch first, then line: the same order as every other workflow step."""
+    batch = _lock_batch(line.batch)
+    return batch, PayoutLine.objects.select_for_update().get(pk=line.pk)
+
+
+def _require_exported(batch: PayoutBatch, line: PayoutLine) -> None:
+    if batch.status != PayoutBatch.Status.EXPORTED:
+        raise InvalidTransition(f"{line.reference}: batch is {batch.status}, not exported")
+
+
+def _require_reason(reason: str) -> str:
+    reason = reason.strip()
+    if not reason:
+        raise PayoutError("a reason is required")
+    return reason[:200]
+
+
+def _close_if_resolved(batch: PayoutBatch) -> None:
+    """Once every line has an outcome the batch is closed, whatever those outcomes were."""
+    if batch.status == PayoutBatch.Status.EXPORTED and (
+        not batch.lines.filter(status=PayoutLine.Status.PENDING).exists()
+    ):
+        _transition(batch, PayoutBatch.Status.PAID)
+        batch.paid_at = timezone.now()
+        batch.save(update_fields=["status", "paid_at"])
+
+
+def _pay_line(line: PayoutLine, bank_reference: str) -> None:
+    _transition(line, PayoutLine.Status.PAID)
+    line.bank_reference = bank_reference
+    line.paid_at = timezone.now()
+    line.save(update_fields=["status", "bank_reference", "paid_at"])
+
+
+@db_transaction.atomic
+def mark_line_paid(line: PayoutLine, bank_reference: str = "") -> PayoutLine:
+    """PENDING -> PAID. The bank confirmed the credit; the journal is already posted."""
+    batch, line = _lock_line(line)
+    _require_exported(batch, line)
+    _pay_line(line, bank_reference)
+    _close_if_resolved(batch)
+    return line
+
+
+@db_transaction.atomic
+def mark_batch_paid(batch: PayoutBatch, bank_reference: str = "") -> PayoutBatch:
+    """Confirm every line still pending, for when the bank accepts the whole file."""
+    batch = _lock_batch(batch)
+    if not batch.can_transition(PayoutBatch.Status.PAID):
+        raise InvalidTransition(f"{batch.reference}: cannot move from {batch.status} to paid")
+    for line in batch.lines.select_for_update().filter(status=PayoutLine.Status.PENDING):
+        _pay_line(line, bank_reference)
+    _close_if_resolved(batch)
+    return batch
+
+
+@db_transaction.atomic
+def mark_line_failed(line: PayoutLine, reason: str) -> PayoutLine:
+    """PENDING -> FAILED. The bank rejected the entry, so the journal is reversed."""
+    reason = _require_reason(reason)
+    batch, line = _lock_line(line)
+    _require_exported(batch, line)
+    _transition(line, PayoutLine.Status.FAILED)
+    _reverse_line(line, reason)
+    line.failure_reason = reason
+    line.save(update_fields=["status", "reversal_journal", "reversed_at", "failure_reason"])
+    _close_if_resolved(batch)
+    return line
+
+
+@db_transaction.atomic
+def mark_line_returned(line: PayoutLine, reason: str) -> PayoutLine:
+    """PAID -> RETURNED. The credit bounced back, possibly after the batch closed."""
+    reason = _require_reason(reason)
+    _, line = _lock_line(line)
+    _transition(line, PayoutLine.Status.RETURNED)
+    _reverse_line(line, reason)
+    line.failure_reason = reason
+    line.save(update_fields=["status", "reversal_journal", "reversed_at", "failure_reason"])
+    return line
